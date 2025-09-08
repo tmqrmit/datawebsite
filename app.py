@@ -7,6 +7,10 @@ from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
 import joblib
 import numpy as np
+try:
+    from nltk.stem import PorterStemmer
+except Exception:  # nltk may be missing in minimal environments
+    PorterStemmer = None
 
 # -------------------------
 # Config
@@ -130,20 +134,29 @@ def predict_recommend_proba(text: str) -> float:
 INVERTED = defaultdict(set)
 TOKENS_PER_ITEM = {}  # item_id -> Counter(tokens)
 WEIGHTS = {"title": 3.0, "class": 2.0, "department": 1.5, "description": 1.0}
+STEMMER = PorterStemmer() if PorterStemmer else None
 
 def normalize_token(w: str) -> str:
+    """Normalize a token for search indexing.
+
+    Uses a Porter stemmer so that simple morphological variants map to the
+    same root form (e.g. ``dress`` and ``dresses`` → ``dress``).  We still
+    strip punctuation and short tokens are returned as-is.
+    """
     w = w.lower()
     w = re.sub(r"[^a-z0-9]+", "", w)
     if len(w) <= 3:
         return w
-    # plural-ish rules; avoid cutting "ss" like "dress"
-    if w.endswith("sses"):  # dresses -> dress
+    if STEMMER:
+        return STEMMER.stem(w)
+    # Fallback manual plural handling when NLTK isn't available
+    if w.endswith("sses"):
         return w[:-2]
-    if w.endswith("ies") and len(w) > 4:  # "bodies" -> "body"
+    if w.endswith("ies") and len(w) > 4:
         return w[:-3] + "y"
-    if w.endswith("es") and not w.endswith("ses"):  # "boxes" -> "box"
+    if w.endswith("es") and not w.endswith("ses"):
         return w[:-2]
-    if w.endswith("s") and not w.endswith("ss"):   # "jeans" -> "jean"
+    if w.endswith("s") and not w.endswith("ss"):
         return w[:-1]
     return w
 
