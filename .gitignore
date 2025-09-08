@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual envs / Conda ---
+.venv/
+venv/
+env/
+.conda/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Local databases ---
+shop.db
+*.sqlite*
+*.db
+
+# --- Data (raw/large) ---
+data/**
+!data/README.md   # keep a note on how to get data
+
+# --- Model artifacts ---
+models/**
+!models/README.md
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.temp
+
+# --- Secrets ---
+.env
+.env.*
+*.pem
+*.key
+credentials*.json
+
+# --- Editors / OS ---
+.vscode/
+.DS_Store
+Thumbs.db

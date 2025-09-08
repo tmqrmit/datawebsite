@@ -1,0 +1,123 @@
+{% extends "base.html" %} {% block title %}New Review · winter{% endblock %} {%
+block content %}
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="card p-3 p-md-4">
+      <h4 class="mb-3">Write a review</h4>
+      <form method="post" id="review-form">
+        <div class="mb-3">
+          <label class="form-label"
+            >Title <span class="text-secondary">(optional)</span></label
+          >
+          <input class="form-control" name="title" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Review description</label>
+          <textarea
+            class="form-control"
+            rows="6"
+            name="body"
+            required
+            placeholder="Share fit, fabric, style and quality…"
+          ></textarea>
+          <div class="input-hint mt-1">
+            The model reads this to suggest a recommendation.
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Rating</label>
+          <select class="form-select" name="rating">
+            {% for n in [5,4,3,2,1] %}
+            <option value="{{ n }}">{{ n }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label"
+            >Model’s suggestion (you can override)</label
+          >
+          <div class="d-flex align-items-center gap-2">
+            <select
+              class="form-select w-auto"
+              name="recommend_label"
+              id="recommend_label"
+            >
+              <option value="1">1 (recommended)</option>
+              <option value="0">0 (not recommended)</option>
+            </select>
+            <span id="suggestion_chip" class="badge-soft"
+              >Waiting for text…</span
+            >
+          </div>
+          <div class="input-hint mt-1">Updates as you type.</div>
+        </div>
+
+        <input type="hidden" name="suggested" id="suggested" value="1" />
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary">
+            <i class="bi bi-send"></i> Publish review
+          </button>
+          <a
+            class="btn btn-outline-primary"
+            href="{{ url_for('item_detail', item_id=item.id) }}"
+            >Cancel</a
+          >
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="hero h-100">
+      <div class="badge-soft mb-2">You’re reviewing</div>
+      <h5 class="mb-1">{{ item.title }}</h5>
+      <div class="small text-secondary">
+        {{ item.class_name }} · {{ item.department_name }}
+      </div>
+      <div class="text-secondary mt-3">
+        {{ (item.description or '')[:220] }}{% if (item.description or
+        '')|length > 220 %}…{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById("review-form");
+  const select = document.getElementById("recommend_label");
+  const suggested = document.getElementById("suggested");
+  const chip = document.getElementById("suggestion_chip");
+
+  let t;
+  function debounceSuggest() {
+    clearTimeout(t);
+    t = setTimeout(suggest, 350);
+  }
+
+  function suggest() {
+    const fd = new FormData(form);
+    fetch('{{ url_for("suggest_label") }}', { method: "POST", body: fd })
+      .then((r) => r.text())
+      .then((lbl) => {
+        const isRec = lbl === "1";
+        select.value = isRec ? "1" : "0";
+        suggested.value = select.value;
+        chip.textContent = isRec
+          ? "Model suggests: Recommended (1)"
+          : "Model suggests: Not recommended (0)";
+      })
+      .catch(() => {
+        chip.textContent = "Suggestion unavailable";
+      });
+  }
+
+  form
+    .querySelector('textarea[name="body"]')
+    .addEventListener("input", debounceSuggest);
+  form
+    .querySelector('input[name="title"]')
+    .addEventListener("input", debounceSuggest);
+</script>
+{% endblock %}

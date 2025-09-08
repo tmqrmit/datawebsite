@@ -1,0 +1,51 @@
+{% extends "base.html" %} {% block title %}Review #{{ rv.id }} · winter{%
+endblock %} {% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card p-3 p-md-4">
+      <div class="d-flex justify-content-between align-items-center">
+        <h4 class="m-0">Review #{{ rv.id }}</h4>
+        <a
+          class="btn btn-outline-primary btn-sm"
+          href="{{ url_for('item_detail', item_id=rv.item.id) }}"
+        >
+          <i class="bi bi-arrow-left"></i> Back to item
+        </a>
+      </div>
+      <div class="text-secondary mt-1">
+        For:
+        <a href="{{ url_for('item_detail', item_id=rv.item.id) }}"
+          >{{ rv.item.title }}</a
+        >
+      </div>
+      <hr />
+      <div class="mb-2">
+        <strong>Rating:</strong>
+        <span class="stars">
+          {% for i in range(1,6) %}
+          <i
+            class="bi {{ 'bi-star-fill' if i <= rv.rating else 'bi-star' }}"
+          ></i>
+          {% endfor %}
+        </span>
+      </div>
+      <div class="mb-2">
+        <strong>Recommended?</strong>
+        <span class="badge-soft"
+          >{{ 'Yes (1)' if rv.recommend_label==1 else 'No (0)' }}</span
+        >
+        <span class="text-secondary ms-2"
+          >Model suggested: {{ rv.model_suggested }}</span
+        >
+      </div>
+      {% if rv.title %}
+      <h6 class="mt-2">{{ rv.title }}</h6>
+      {% endif %}
+      <p class="mt-2">{{ rv.body }}</p>
+      <div class="small text-secondary">
+        {{ rv.created_at.strftime("%Y-%m-%d %H:%M") }}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
