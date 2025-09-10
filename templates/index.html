@@ -55,7 +55,7 @@ content %} {% if q %}
         <div class="rec-meter mb-3" aria-label="Recommendation rate">
           <div
             class="rec-fill"
-            style="width: {{ pct|default(0)|replace('%','')|float }}%;"
+            style="width: {{ pct|default('0')|replace('%','')|float }}%;"
           ></div>
         </div>
 

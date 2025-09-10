@@ -395,33 +395,61 @@ def load_items_from_csv(path: str = DATA_CSV) -> int:
     if not os.path.exists(path):
         print(f"[Import] CSV not found at {path}")
         return 0
+
     df = pd.read_csv(path)
+
+    # normalize headers
+    def norm(s): return str(s).strip().lower().replace("_", " ")
+    cols = {norm(c): c for c in df.columns}
+    def col(*names):
+        for n in names:
+            k = norm(n)
+            if k in cols: return cols[k]
+        return None
+
+    c_id    = col("clothing id", "clothing_id", "id")
+    c_title = col("clothes title", "item title", "product title", "title")
+    c_desc  = col("clothes description", "description", "product description")
+    c_class = col("class name", "class")
+    c_dept  = col("department name", "department")
+
+    if not c_id:
+        print("[Import] ERROR: 'Clothing ID' column not found — cannot create real items.")
+        return 0
+
+    # one row per unique Clothing ID
+    df = df[df[c_id].notna()].copy()
+    df[c_id] = df[c_id].astype(int)
+    df = df.sort_values(by=[c_id]).drop_duplicates(subset=[c_id], keep="first")
+
     added = 0
     for _, r in df.iterrows():
-        title = str(r.get("Clothes Title", "")).strip()
-        desc  = str(r.get("Clothes Description", "")).strip()
-        cls   = str(r.get("Class Name", "")).strip()
-        dept  = str(r.get("Department Name", "")).strip()
-        srcid = r.get("Clothing ID", None)
-        if not title:
-            continue
-        item = None
-        if pd.notna(srcid):
-            try:
-                item = Item.query.filter_by(source_clothing_id=int(srcid)).first()
-            except Exception:
-                item = None
-        if not item:
-            item = Item.query.filter_by(title=title, class_name=cls, department_name=dept).first()
+        srcid = int(r[c_id])
+        title = str(r.get(c_title, "") or "").strip()
+        desc  = str(r.get(c_desc, "") or "").strip()
+        cls   = str(r.get(c_class, "") or "").strip()
+        dept  = str(r.get(c_dept, "") or "").strip()
+
+        item = Item.query.filter_by(source_clothing_id=srcid).first()
         if not item:
             item = Item(
-                source_clothing_id=int(srcid) if pd.notna(srcid) else None,
-                title=title, description=desc, class_name=cls, department_name=dept,
+                source_clothing_id=srcid,
+                title=title or f"Item {srcid}",
+                description=desc,
+                class_name=cls,
+                department_name=dept,
             )
             db.session.add(item)
             added += 1
+        else:
+            # fill missing fields if CSV has them
+            if not item.title and title: item.title = title
+            if not item.description and desc: item.description = desc
+            if not item.class_name and cls: item.class_name = cls
+            if not item.department_name and dept: item.department_name = dept
+
     db.session.commit()
-    print(f"[Import] Added {added} new items.")
+    print(f"[Import] Items in DB: {Item.query.count()} (+{added} added)")
     return added
 
 def load_reviews_from_csv(path: str = DATA_CSV, limit: int | None = None) -> int:
