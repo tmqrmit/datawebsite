@@ -256,3 +256,10 @@ main {
   border-color: rgba(124, 58, 237, 0.55);
   color: #fff;
 }
+.form-select:disabled,
+.form-select[disabled] {
+  opacity: 1; /* remove dimming */
+  color: #dbeafe; /* lighter text */
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.24);
+}
