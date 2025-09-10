@@ -18,7 +18,7 @@ shop.db
 *.db
 
 # --- Data (raw/large) ---
-data/**
+# data/**
 !data/README.md   # keep a note on how to get data
 
 # --- Model artifacts ---
