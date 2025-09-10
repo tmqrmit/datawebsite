@@ -39,19 +39,6 @@ except Exception:  # keep app running even if these aren't installed
     FastText = None
 
 
-# -------------------------
-# Config
-# -------------------------
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(BASE_DIR, "shop.db")
-DATA_CSV = os.path.join(BASE_DIR, "data", "clothing_reviews_m2.csv")
-MODEL_P = os.path.join(BASE_DIR, "models", "review_recommender.joblib")
-
-app = Flask(__name__)
-app.secret_key = "dev-secret"  # replace in production
-app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
 class TextToVectorTransformer(BaseEstimator, TransformerMixin):
     """
     A custom scikit-learn transformer that handles text preprocessing and
@@ -189,7 +176,7 @@ class TextToVectorTransformer(BaseEstimator, TransformerMixin):
     # Function to remove invalid tokens
     def remove_tokens(self, corpus, tokens_to_remove, remove_single_char = False, print_process = False):
         '''
-        Remove the tokens of `corpus` that are in `tokens_to_remove`
+        Remove the tokens of corpus that are in tokens_to_remove
 
         Args:
             corpus (list of list): tokenized text
@@ -324,6 +311,18 @@ class TextToVectorTransformer(BaseEstimator, TransformerMixin):
             weighted_vectors.append(weighted_avg)
 
         return np.vstack(weighted_vectors)  # shape: (n_docs, vector_size)
+# -------------------------
+# Config
+# -------------------------
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DB_PATH = os.path.join(BASE_DIR, "shop.db")
+DATA_CSV = os.path.join(BASE_DIR, "data", "clothing_reviews_m2.csv")
+MODEL_P = os.path.join(BASE_DIR, "models", "review_recommender.joblib")
+
+app = Flask(__name__)
+app.secret_key = "dev-secret"  # replace in production
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
@@ -386,6 +385,7 @@ class Review(db.Model):
         db.Index("idx_reviews_item_created", "item_id", "created_at"),
     )
 
+
 # -------------------------
 # Milestone I model loader
 # Expectation: a scikit-learn Pipeline saved via joblib.dump(pipeline)
@@ -419,6 +419,16 @@ def predict_recommend_proba(text: str) -> float:
         return 0.5
 
     try:
+        # If the pipeline supports probabilities directly
+        if hasattr(pipeline, "predict_proba"):
+            proba = pipeline.predict_proba([text])[0]
+            return float(proba[1]) if len(proba) > 1 else float(proba[0])
+
+        # Or supports decision_function → map with sigmoid
+        if hasattr(pipeline, "decision_function"):
+            score = float(pipeline.decision_function([text])[0])
+            return float(_sigmoid(score))
+
         # Fallback to plain predict then map to 0/1
         pred = int(pipeline.predict([text])[0])
         return 1.0 if pred == 1 else 0.0
@@ -561,8 +571,8 @@ def bootstrap_if_needed():
     build_index()
 
 
-# with app.app_context():
-#     bootstrap_if_needed()
+with app.app_context():
+    bootstrap_if_needed()
 
 
 # -------------------------
@@ -601,6 +611,40 @@ def item_detail(item_id):
 @app.route("/item/<int:item_id>/review/new", methods=["GET", "POST"])
 def new_review(item_id):
     item = Item.query.get_or_404(item_id)
+
+    if request.method == "POST":
+        title  = request.form.get("title", "").strip()
+        body   = request.form.get("body", "").strip()
+        rating = int(request.form.get("rating", "5"))
+
+        if not body:
+            flash("Review description is required.", "danger")
+            return redirect(request.url)
+
+        # ⚡ Compute model suggestion now
+        text = (title + " " + body).strip()
+        prob = predict_recommend_proba(text)  # returns 0..1
+        suggested = 1 if prob >= 0.5 else 0
+
+        # User can override via dropdown
+        final_lbl = int(request.form.get("recommend_label", suggested))
+
+        rv = Review(
+            item_id=item.id,
+            title=title,
+            body=body,
+            rating=max(1, min(5, rating)),
+            recommend_label=1 if final_lbl == 1 else 0,
+            model_suggested=1 if suggested == 1 else 0,
+        )
+        db.session.add(rv)
+        db.session.commit()
+        flash("Review published.", "success")
+        return redirect(url_for("review_detail", review_id=rv.id))
+
+    # GET → render the form (JS will call /suggest as the user types)
+    return render_template("review_form.html", item=item, suggested=None)
+    item = Item.query.get_or_404(item_id)
     if request.method == "POST":
         title = request.form.get("title", "").strip()
         body = request.form.get("body", "").strip()
@@ -635,16 +679,12 @@ def new_review(item_id):
 
 @app.route("/suggest", methods=["POST"])
 def suggest_label():
-    """
-    Small endpoint to compute model suggestion for entered title/body via form (AJAX-friendly).
-    Returns '0' or '1'.
-    """
-    title = request.form.get("title", "").strip()
-    body = request.form.get("body", "").strip()
-    text = (title + " " + body).strip()
+    title = request.form.get("title","").strip()
+    body  = request.form.get("body","").strip()
+    text  = (title + " " + body).strip()
     prob = predict_recommend_proba(text) if text else 0.5
     lbl = 1 if prob >= 0.5 else 0
-    return str(lbl)
+    return {"label": lbl, "prob": round(prob, 3)}
 
 
 @app.route("/reviews/<int:review_id>")
@@ -661,5 +701,5 @@ def admin_reindex():
     return redirect(url_for("index"))
 
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     app.run(debug=True)
