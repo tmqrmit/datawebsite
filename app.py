@@ -71,7 +71,7 @@ except Exception:
     class TransformerMixin: pass  # noqa
 
 class TextToVectorTransformer(BaseEstimator, TransformerMixin):
-    # ... (kept exactly as you provided; trimmed for brevity in this comment)
+    # (kept as-is)
     def __init__(self):
         self.vocab = None
         self.fasttext_model = None
@@ -256,19 +256,16 @@ def predict_label_strict(text: str) -> int:
     return y
 
 # -------------------------
-# Search indexes
-#   - Simple index: stemmed token match with field weights
-#   - TF-IDF index: cosine similarity for “smart” ranking
+# Search indexes (simple + TF-IDF)
 # -------------------------
 INVERTED = defaultdict(set)
 TOKENS_PER_ITEM = {}  # item_id -> Counter(tokens)
 WEIGHTS = {"title": 3.0, "class": 2.0, "department": 2.0, "description": 1.0}
 STEMMER = PorterStemmer() if PorterStemmer else None
 
-# TF-IDF globals
-TFIDF_VECT = None       # TfidfVectorizer
-TFIDF_MAT  = None       # sparse matrix (n_items x vocab)
-TFIDF_IDS  = []         # item ids in row order
+TFIDF_VECT = None
+TFIDF_MAT  = None
+TFIDF_IDS  = []
 
 def normalize_token(w: str) -> str:
     w = w.lower()
@@ -308,7 +305,6 @@ def index_item(item: Item):
     TOKENS_PER_ITEM[item.id] = c
 
 def build_tfidf_index():
-    """Build/refresh TF-IDF matrix from item text (weighted fields)."""
     global TFIDF_VECT, TFIDF_MAT, TFIDF_IDS
     TFIDF_VECT = TFIDF_MAT = None
     TFIDF_IDS = []
@@ -371,11 +367,6 @@ def score_items(q: str):
     return [i for i, _ in scored]
 
 def rank_items(query: str, mode: str = "simple"):
-    """
-    mode:
-      - 'simple': stemmed token match (your original method)
-      - 'tfidf' : cosine similarity in TF-IDF space (smart search)
-    """
     q = (query or "").strip()
     if not q:
         return [], "simple"
@@ -392,11 +383,9 @@ def rank_items(query: str, mode: str = "simple"):
                 return ids, "tfidf"
             except Exception as e:
                 print("[Search][TFIDF] query failed:", e)
-        # fallback
         print("[Search][TFIDF] unavailable; fallback to simple")
         return score_items(q), "simple"
 
-    # default
     return score_items(q), "simple"
 
 # -------------------------
@@ -435,11 +424,110 @@ def load_items_from_csv(path: str = DATA_CSV) -> int:
     print(f"[Import] Added {added} new items.")
     return added
 
+def load_reviews_from_csv(path: str = DATA_CSV, limit: int | None = None) -> int:
+    """
+    Import reviews from the CSV and attach them to items.
+    Expected columns:
+      'Clothing ID', 'Title', 'Review Text', 'Rating', 'Recommended IND',
+      'Positive Feedback Count', 'Age', 'Clothes Title'
+    """
+    if not os.path.exists(path):
+        print(f"[Import][Reviews] CSV not found at {path}")
+        return 0
+
+    df = pd.read_csv(path)
+
+    # Build lookups
+    id_map = {it.source_clothing_id: it.id for it in Item.query.all() if it.source_clothing_id is not None}
+    title_map = {it.title.strip().lower(): it.id for it in Item.query.all() if it.title}
+
+    # Dedupe key: (item_id, body[:120], title[:80])
+    existing_keys = set(
+        (rv.item_id, (rv.body or "")[:120], (rv.title or "")[:80])
+        for rv in Review.query.all()
+    )
+
+    added = 0
+    for _, row in df.iterrows():
+        if limit and added >= limit:
+            break
+
+        # Resolve item_id
+        item_id = None
+        srcid = row.get("Clothing ID", None)
+        if pd.notna(srcid):
+            try:
+                srcid = int(srcid)
+                item_id = id_map.get(srcid)
+            except Exception:
+                item_id = None
+        if not item_id:
+            ctitle = str(row.get("Clothes Title", "") or "").strip().lower()
+            if ctitle:
+                item_id = title_map.get(ctitle)
+        if not item_id:
+            continue
+
+        rev_title = str(row.get("Title", "") or "").strip()
+        body = str(row.get("Review Text", "") or "").strip()
+        if not body:
+            continue
+
+        try:
+            rating = int(row.get("Rating", 5))
+        except Exception:
+            rating = 5
+        rating = max(1, min(5, rating))
+
+        try:
+            rec = int(row.get("Recommended IND", 0))
+            rec = 1 if rec == 1 else 0
+        except Exception:
+            rec = 0
+
+        try:
+            age = int(row.get("Age"))
+        except Exception:
+            age = None
+
+        try:
+            pfc = int(row.get("Positive Feedback Count", 0))
+        except Exception:
+            pfc = 0
+
+        key = (item_id, body[:120], rev_title[:80])
+        if key in existing_keys:
+            continue
+
+        rv = Review(
+            item_id=item_id,
+            title=rev_title if rev_title else None,
+            body=body,
+            rating=rating,
+            recommend_label=rec,
+            model_suggested=rec,  # historical data -> mirror label
+            positive_feedback_count=pfc,
+            reviewer_age=age,
+        )
+        db.session.add(rv)
+        existing_keys.add(key)
+        added += 1
+
+        if added % 1000 == 0:
+            db.session.flush()
+
+    db.session.commit()
+    print(f"[Import][Reviews] Added {added} reviews.")
+    return added
+
 def bootstrap_if_needed():
     db.create_all()
     if Item.query.count() == 0:
         print("[Bootstrap] Items empty; importing CSV…")
         load_items_from_csv()
+    if Review.query.count() == 0:
+        print("[Bootstrap] Reviews empty; importing CSV reviews…")
+        load_reviews_from_csv()
     build_index()
 
 with app.app_context():
@@ -540,14 +628,24 @@ def admin_reindex():
 
 @app.route("/admin/import_csv")
 def admin_import_csv():
+    """
+    Import/merge items and reviews from the CSV.
+    Params:
+      - wipe=1  : delete all items+reviews first
+      - limit=N : only import first N reviews (helpful for testing)
+    """
     if request.args.get("wipe") == "1":
         Review.query.delete()
         Item.query.delete()
         db.session.commit()
         print("[Import] Wiped items + reviews")
-    added = load_items_from_csv()
+
+    added_items = load_items_from_csv()
+    limit = request.args.get("limit", type=int)
+    added_reviews = load_reviews_from_csv(limit=limit)
+
     build_index()
-    flash(f"Imported CSV; added {added} items. Index rebuilt.", "success")
+    flash(f"Imported CSV · items +{added_items}, reviews +{added_reviews}. Index rebuilt.", "success")
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
