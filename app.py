@@ -316,7 +316,7 @@ class TextToVectorTransformer(BaseEstimator, TransformerMixin):
 # -------------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, "shop.db")
-DATA_CSV = os.path.join(BASE_DIR, "data", "clothing_reviews_m2.csv")
+DATA_CSV = os.path.join(BASE_DIR, "data", "assignment3_II.csv")
 MODEL_P = os.path.join(BASE_DIR, "models", "review_recommender.joblib")
 
 app = Flask(__name__)
@@ -331,7 +331,7 @@ db = SQLAlchemy(app)
 # DB Models (SQLite-friendly)
 # -------------------------
 class Item(db.Model):
-    _tablename_ = "items"
+    __tablename__ = "items"
 
     id = db.Column(db.Integer, primary_key=True)
     # optional: keep a link to the raw dataset id ("Clothing ID")
@@ -358,7 +358,7 @@ class Item(db.Model):
 
 
 class Review(db.Model):
-    _tablename_ = "reviews"
+    __tablename__ = "reviews"
 
     id = db.Column(db.Integer, primary_key=True)
     item_id = db.Column(
@@ -416,26 +416,18 @@ def predict_recommend_proba(text: str) -> float:
     """
     if pipeline is None:
         # Fallback: neutral guess
-        return 0.5
-
+        print("No model loaded")
+        return 0
+    
     try:
-        # If the pipeline supports probabilities directly
-        if hasattr(pipeline, "predict_proba"):
-            proba = pipeline.predict_proba([text])[0]
-            return float(proba[1]) if len(proba) > 1 else float(proba[0])
-
-        # Or supports decision_function → map with sigmoid
-        if hasattr(pipeline, "decision_function"):
-            score = float(pipeline.decision_function([text])[0])
-            return float(_sigmoid(score))
-
         # Fallback to plain predict then map to 0/1
         pred = int(pipeline.predict([text])[0])
-        return 1.0 if pred == 1 else 0.0
+        print(f"Model predict {pred} for \"{text}\"")
+        return pred
 
     except Exception as e:
         print("[Model] Predict error:", e)
-        return 0.5
+        return 0
 
 
 # -------------------------
@@ -682,9 +674,8 @@ def suggest_label():
     title = request.form.get("title","").strip()
     body  = request.form.get("body","").strip()
     text  = (title + " " + body).strip()
-    prob = predict_recommend_proba(text) if text else 0.5
-    lbl = 1 if prob >= 0.5 else 0
-    return {"label": lbl, "prob": round(prob, 3)}
+    prob = predict_recommend_proba(text) if text else 0
+    return {"label": prob, "prob": prob}
 
 
 @app.route("/reviews/<int:review_id>")
