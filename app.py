@@ -10,6 +10,61 @@ import pandas as pd
 import joblib
 import numpy as np
 
+from bs4 import BeautifulSoup
+import difflib
+import html
+from nltk.collocations import BigramCollocationFinder, BigramAssocMeasures, TrigramAssocMeasures, TrigramCollocationFinder, QuadgramCollocationFinder, QuadgramAssocMeasures
+from nltk.probability import *
+from nltk.util import ngrams
+from sklearn.base import BaseEstimator, TransformerMixin
+from collections import Counter
+import gensim.downloader as api
+from gensim.models import FastText
+import joblib
+import lightgbm as lgb
+from matplotlib import pyplot as plt
+import nltk
+from nltk.corpus import words, wordnet
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import sent_tokenize, RegexpTokenizer
+import numpy as np
+import os
+import pandas as pd
+import re
+from scipy.sparse import hstack, csr_matrix
+from scipy.stats import chi2_contingency
+import seaborn as sns
+from sklearn.ensemble import AdaBoostClassifier, VotingClassifier
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import confusion_matrix, make_scorer, classification_report
+from sklearn.model_selection import cross_val_score, cross_validate, StratifiedKFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, PowerTransformer, StandardScaler
+from sklearn.svm import LinearSVC
+from sklearn.tree import DecisionTreeClassifier
+import warnings
+
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+import warnings
+warnings.filterwarnings('ignore')
+
+# load default dataset
+nltk.download('punkt_tab')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+
+# Code to import libraries ??? FIX ME: remove all unused libs before submission
+
+# load default dataset
+nltk.download('punkt_tab')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+nltk.download('words')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('universal_tagset')
+nltk.download('averaged_perceptron_tagger_eng') # Add this line to download the missing resource
+
 # -------- Optional light deps for search stemming (safe if missing)
 try:
     from nltk.stem import PorterStemmer
@@ -25,10 +80,277 @@ except Exception:
     class TransformerMixin: pass  # noqa
 
 class TextToVectorTransformer(BaseEstimator, TransformerMixin):
-    """Only needed if your joblib pipeline references this class. Kept for compatibility."""
-    def __init__(self): pass
-    def fit(self, X, y=None): return self
-    def transform(self, X): return np.array(X, dtype=object)  # placeholder; real model usually not using this here
+    """
+    A custom scikit-learn transformer that handles text preprocessing and
+    converts it to weighted FastText vectors.
+    """
+    def __init__(self):
+        self.vocab = None
+        self.fasttext_model = None
+        self.tfidf_vectorizer = None
+        self.data_is_preprocessed = False
+
+    def fit(self, X, y = None):
+        """
+        Fits the transformer by preprocessing the data and training the FastText model.
+        
+        Args:
+            X (List[str]): The input text data.
+            y (List[int], optional): The target variable. Not used in this transformer.
+        """
+        # Retrieve cleaned text and vocab (already processed in task 1)
+        self.vocab = read_vocab('vocab_both.txt')
+        
+        # Train the FastText model on the preprocessed data
+        self.fasttext_model = FastText.load('fasttext_model.model')
+        
+        # Fit the weighted vectorizer (TF-IDF)
+        self.tfidf_vectorizer = TfidfVectorizer(analyzer='word', vocabulary=self.vocab, lowercase=True)
+        self.tfidf_vectorizer.fit(X)
+        
+        self.data_is_preprocessed = True
+        
+        return self
+
+    def transform(self, X):
+        """
+        Transforms new data using the fitted preprocessing steps and model.
+        
+        Args:
+            X (List[str]): The new input text data.
+
+        Returns:
+            np.ndarray: The weighted vectors for the input data.
+        """
+        if self.vocab is None or self.fasttext_model is None or self.tfidf_vectorizer is None:
+            print(self.vocab, self.fasttext_model, self.tfidf_vectorizer)
+            raise RuntimeError("This transformer has not been fitted yet. Call .fit() before .transform().")
+        
+        # Generate weighted vectors using the stored vocab and model
+        data = pd.DataFrame({
+            'New Review': X if self.data_is_preprocessed else self.text_preprocessing(X)
+        })
+        weighted_vectors = self.calc_weighted_vectors(data, 'New Review', self.vocab, self.fasttext_model)
+        self.data_is_preprocessed = False
+
+        return weighted_vectors
+    
+    # Function to tokenize pd.DataFrame to corpus (a 2D list, each row stores tokens of a review)
+    def tokenize(self, texts, get_vocab = False, print_process = False):
+        '''
+        Perform sentence segmentation and word tokenization.
+
+        Args:
+            df (pd.DataFrame): DataFrame containing text column
+            attribute (str): Name of text column
+            print_process (bool): Print the result of the tokenization process or not
+
+        Returns:
+            corpus (list of list): 2D list of tokens per row
+        '''
+        regex_tokenizer = RegexpTokenizer(r"[a-zA-Z]+(?:[-'][a-zA-Z]+)?")
+        ENTITY_RE = re.compile(r"&(?:[A-Za-z]+|#[0-9]+|#x[0-9A-Fa-f]+);")
+        corpus = []
+
+        for text in texts:
+            tokens = []
+
+            # drop HTML encode
+            unescaped = html.unescape(text)
+            soup = BeautifulSoup(unescaped, 'html.parser')
+            text = soup.get_text()
+            text = ENTITY_RE.sub(' ', text)
+
+            # tokenization
+            for sent in sent_tokenize(text): # sentence segmentation
+                words = regex_tokenizer.tokenize(sent) # word tokenization
+                words = [w.lower() for w in words] # lowercase transform
+                tokens.extend(words)
+            corpus.append(tokens)
+
+        # Build vocab dict (alphabetical order)
+        if get_vocab:
+            unique_tokens = sorted({t for doc in corpus for t in doc})
+            vocab = {token: idx for idx, token in enumerate(unique_tokens)}
+            return corpus, vocab
+
+        # Print process
+        if print_process:
+            print(f"Finish tokenize: {sum([len(tokens) for tokens in corpus])} token extracted")
+
+        return corpus
+
+    # Lemmatization
+    def lemmatize(self, corpus, print_process = False):
+        '''
+        Apply lemmatization to 2D token list.
+
+        Args:
+            corpus (list of list)
+
+        Returns:
+            corpus (list of list): lemmatized tokens
+        '''
+        result_corpus = []
+        pos_map = {
+            'ADJ': 'a',
+            'ADP': 's',
+            'ADV': 'r',
+            'NOUN': 'n', # assume any undefined tags (like DET, PRON, ...) is n (NOUN)
+            'VERB': 'v',
+        }
+
+        lemmatizer = WordNetLemmatizer()
+        for doc in corpus:
+            doc_with_tag = nltk.pos_tag(doc, tagset = 'universal') # set POS tag for all tokens in doc (tag is the type of word: NOUN, ADJ, ...)
+            lemmatized_doc = [lemmatizer.lemmatize(token, pos_map.get(tag, 'n')) for token, tag in doc_with_tag] # assume any undefined tags (like DET, PRON, ...) is n (NOUN)
+            result_corpus.append(lemmatized_doc)
+
+        # Print process
+        if print_process:
+            print("Finish lemmatize:")
+            print(f"+ Before: {sum([len(review_tokens) for review_tokens in corpus])} tokens: {corpus[:5]} ...")
+            print(f"+ Now:    {sum([len(review_tokens) for review_tokens in result_corpus])} tokens: {result_corpus[:5]} ...")
+        return result_corpus
+
+    # Function to remove invalid tokens
+    def remove_tokens(self, corpus, tokens_to_remove, remove_single_char = False, print_process = False):
+        '''
+        Remove the tokens of `corpus` that are in `tokens_to_remove`
+
+        Args:
+            corpus (list of list): tokenized text
+            tokens_to_remove (list): list of tokens (str)
+            remove_single_char (bool): whether removing tokens with length = 1 or not
+
+        Returns:
+            corpus (list of list): cleaned tokenized text
+        '''
+
+        tokens_to_remove = set(tokens_to_remove)
+        cleaned_corpus = []
+        for doc in corpus:
+            cleaned_doc = [w for w in doc if (w not in tokens_to_remove) and ((not remove_single_char) or len(w) >= 2)]
+            cleaned_corpus.append(cleaned_doc)
+
+        # Print process
+        if print_process:
+            print("Finish removal:")
+            print(f"+ Before: {sum([len(review_tokens) for review_tokens in corpus])} tokens: {corpus[:5]} ...")
+            print(f"+ Now:    {sum([len(review_tokens) for review_tokens in cleaned_corpus])} tokens: {cleaned_corpus[:5]} ...")
+
+        return cleaned_corpus
+    
+    # Function to add collocations to corpus
+    def add_collocations(self, corpus, collocations, print_process = False):
+        '''
+        Add collocations to the corpus
+
+        Args:
+            corpus (list of list): 2D token list
+            collocations_dict (dict): Dictionary of top collocations by n-gram type
+
+        Returns:
+            corpus (list of list): Corpus with detected collocations treated as single tokens (e.g., 'new-york')
+            replaced_tokens (dict): All tokens that have been replaced by collocations in a form {token_be_replaced: collocation}
+        '''
+        result_corpus = []
+
+        for doc in corpus:
+            doc = ' '.join(doc) # doc is transfromed from ['he', 'work', 'out', ...] to 'he work out ...' so all collocations will be separated with space
+            for collocation in collocations:
+                collocation_with_space = collocation.replace('-', ' ')
+                doc = doc.replace(collocation_with_space, collocation) # replace all collocation with space to collocation with "-", like 'work out' to 'work-out'
+            doc = doc.split(' ') # doc is transformed to ['he', 'work-out', ...]
+            result_corpus.append(doc)
+
+        if print_process:
+            print(f"Finish add collocations:")
+            print(f"+ Before: {sum([len(review_tokens) for review_tokens in corpus])} tokens: {corpus[:5]} ...")
+            print(f"+ Now:    {sum([len(review_tokens) for review_tokens in result_corpus])} tokens: {result_corpus[:5]} ...")
+
+        return result_corpus
+
+    # Function to implement full pipeline
+    def text_preprocessing(self, texts):
+        '''
+        Idea:
+            1. Remove all tokens that were removed in training dataset (task 1)
+            2. Replace all tokens that were replaced in training dataset. E.g: if in training dataset, "rcm" is replaced by "recommend", so in new text, "rcm" is also be replaced similar. 
+        Args:
+            texts (List[str]): List of all texts that need to be preprocessing.
+        Returns:
+            processed_texts (List[str]): List of all texts after preprocessing.
+        '''
+        # ---- Sentence segmentation -> word tokenization ----
+        corpus = self.tokenize(texts)
+
+        # ---- Handle collocations and typos ----
+        with open('collocations.txt', 'r') as f:
+            collocations = set(w.strip().lower() for w in f if w.strip())
+        corpus = self.add_collocations(corpus, collocations)
+        with open('typos.txt', 'r') as f:
+            typos_dict = {line.split(':')[0]: line.split(':')[1].strip() for line in f}
+        corpus = [[typos_dict.get(token, token) for token in doc] for doc in corpus]
+
+        # ---- Text removal ----
+        with open('removed_tokens.txt', 'r') as f:
+            removed_tokens = set(w.strip().lower() for w in f if w.strip())
+        corpus = self.remove_tokens(corpus, removed_tokens)
+
+        # ---- Lemmatization ----
+        corpus = self.lemmatize(corpus)
+        with open("stopwords_en.txt", "r", encoding="utf-8") as f: # Download stopwords_en.txt
+            stop_words = set(w.strip().lower() for w in f if w.strip())
+        corpus = self.remove_tokens(corpus, stop_words, remove_single_char = True) # Text removal after lemmatization: stopwords + tokens with length = 1
+
+        # ---- Output ----
+        processed_texts = [' '.join(doc) for doc in corpus]
+        return processed_texts
+    # Function to calculate weighted vectors (document representation) based on an embedding model loaded in advance
+    def calc_weighted_vectors(self, df, attribute, vocab_dict, model):
+        '''
+        Calculates TF-IDF weighted document vectors.
+
+        Args:
+            df: The DataFrame containing the text data.
+            attribute: The column name in the DataFrame with the text.
+            vocab_dict: A dictionary mapping vocabulary tokens to their unique IDs.
+            model: The pre-trained word embedding model (e.g., Word2Vec, FastText).
+
+        Returns:
+            numpy.ndarray: A 2D array where each row is the weighted vector for a document.
+        '''
+        # Use TfidfVectorizer with the predefined vocabulary to get TF-IDF scores
+        tfidf_matrix = self.tfidf_vectorizer.transform(df[attribute].fillna(''))
+
+        # Precompute embedding matrix aligned with vocab_dict
+        embedding_matrix = np.zeros((len(vocab_dict), model.wv.vector_size))
+        for token, idx in vocab_dict.items():
+            if token in model.wv.key_to_index:  # Check if token exists in pretrained model
+                embedding_matrix[idx] = model.wv[token]
+            # else remains zero vector
+
+        # Compute Weighted Review Vectors (TF-IDF weighted mean)
+        weighted_vectors = []
+        for doc_idx in range(tfidf_matrix.shape[0]):
+            row = tfidf_matrix.getrow(doc_idx)
+            indices = row.indices # only get element that is not = 0
+            weights = row.data
+
+            if len(indices) == 0:
+                weighted_vectors.append(np.zeros(model.wv.vector_size))
+                continue
+
+            # Get the corresponding word vectors from the precomputed embedding matrix
+            word_vecs = embedding_matrix[indices]
+
+            # Perform a dot product to get the weighted sum
+            weighted_sum = np.dot(weights, word_vecs)
+            weighted_avg = weighted_sum / weights.sum()
+            weighted_vectors.append(weighted_avg)
+
+        return np.vstack(weighted_vectors)  # shape: (n_docs, vector_size)
 
 # -------------------------
 # Config
@@ -131,6 +453,7 @@ def predict_label_strict(text: str) -> int:
     if not text:
         raise ValueError("Empty input")
     y = pipeline.predict([text])[0]
+    # print(f"Model predict {y} for {text}")
     y = int(y)
     if y not in (0, 1):
         raise ValueError(f"Model returned non-binary label: {y}")
@@ -324,7 +647,6 @@ def new_review(item_id):
 def suggest_label():
     """Return plain text '0' or '1' so the browser JS can set the dropdown."""
     title = request.form.get("title", "").strip()
-    return Response("1", mimetype="text/plain")
     body  = request.form.get("body", "").strip()
     text  = (title + " " + body).strip()
     try:
