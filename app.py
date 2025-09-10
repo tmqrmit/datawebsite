@@ -325,8 +325,8 @@ def build_tfidf_index():
         dept  = (it.department_name or "").strip()
         desc  = (it.description or "").strip()
         doc = " ".join([
-            (title + " ") * 3,
-            (cls + " ") * 2,
+            (title + " ") * 2,
+            (cls + " ") * 3,
             (dept + " ") * 2,
             desc,
         ])
@@ -594,7 +594,6 @@ def items_with_rec_order(ids: list[int] | None = None, limit: int | None = None)
 # -------------------------
 # Routes
 # -------------------------
-@app.route("/")
 @app.route("/")
 def index():
     q = request.args.get("q", "").strip()

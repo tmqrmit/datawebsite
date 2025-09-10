@@ -163,8 +163,8 @@ block content %}
       suggested.value = String(v);
       chip.textContent =
         v === 1
-          ? `Model suggests: Recommended (${v})`
-          : `Model suggests: Not recommended (${v})`;
+          ? `Model suggests: Recommended`
+          : `Model suggests: Not recommended`;
 
       btnPublish.disabled = false; // allow publishing after a real prediction
     } catch (e) {
