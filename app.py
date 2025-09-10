@@ -324,6 +324,7 @@ def new_review(item_id):
 def suggest_label():
     """Return plain text '0' or '1' so the browser JS can set the dropdown."""
     title = request.form.get("title", "").strip()
+    return Response("1", mimetype="text/plain")
     body  = request.form.get("body", "").strip()
     text  = (title + " " + body).strip()
     try:

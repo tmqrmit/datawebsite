@@ -114,7 +114,7 @@
     const fd = new FormData(form);
     try {
       const res = await fetch('{{ url_for("suggest_label") }}', { method: "POST", body: fd });
-      const txt = (await res.text()).trim();
+      const txt = res.prob;
       const isRec = (txt === "1");
 
       select.disabled = false;
