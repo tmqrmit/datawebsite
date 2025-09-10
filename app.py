@@ -533,28 +533,55 @@ def bootstrap_if_needed():
 with app.app_context():
     bootstrap_if_needed()
 
+
+def items_with_rec_order(ids: list[int] | None = None, limit: int | None = None):
+    """
+    Return items ordered by SUM(Review.recommend_label) DESC,
+    then by total review count (DESC), then by item id.
+    Also returns a small stats map so templates can show badges.
+    """
+    q = db.session.query(
+        Item,
+        db.func.coalesce(db.func.sum(Review.recommend_label), 0).label("rec_sum"),
+        db.func.count(Review.id).label("review_count"),
+    ).outerjoin(Review, Review.item_id == Item.id)
+
+    if ids:
+        q = q.filter(Item.id.in_(ids))
+
+    q = (
+        q.group_by(Item.id)
+         .order_by(db.desc("rec_sum"), db.desc("review_count"), Item.id)
+    )
+
+    if limit:
+        q = q.limit(limit)
+
+    rows = q.all()
+    items = [row[0] for row in rows]
+    rec_map = {row[0].id: {"rec_sum": int(row[1] or 0), "review_count": int(row[2] or 0)} for row in rows}
+    return items, rec_map
+
+
 # -------------------------
 # Routes
 # -------------------------
 @app.route("/")
+@app.route("/")
 def index():
     q = request.args.get("q", "").strip()
     mode = request.args.get("mode", "simple")  # 'simple' or 'tfidf'
-    items = []
-    count = None
     used_mode = mode
+    count = None
 
     if q:
-        ids, used_mode = rank_items(q, mode)
+        ids, used_mode = rank_items(q, mode)  # filter by query
         count = len(ids)
-        if ids:
-            items = Item.query.filter(Item.id.in_(ids)).all()
-            id_to_item = {it.id: it for it in items}
-            items = [id_to_item[i] for i in ids if i in id_to_item]
+        items, rec_map = items_with_rec_order(ids=ids)  # sort by recommended count
     else:
-        items = Item.query.limit(24).all()
+        items, rec_map = items_with_rec_order(limit=24)  # top recommended on homepage
 
-    return render_template("index.html", items=items, q=q, count=count, mode=used_mode)
+    return render_template("index.html", items=items, q=q, count=count, mode=used_mode, rec_map=rec_map)
 
 @app.route("/item/<int:item_id>")
 def item_detail(item_id):

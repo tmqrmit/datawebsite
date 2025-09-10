@@ -12,30 +12,35 @@
   --radius-xl: 18px;
 }
 /* Hint browsers to render native controls in dark mode */
-:root { color-scheme: dark; }
+:root {
+  color-scheme: dark;
+}
 
 /* Darken the closed select */
 .form-select {
-  background: rgba(15,23,42,.9);   /* slate-900-ish */
-  color: #e5e7eb;                  /* gray-200 */
-  border-color: rgba(255,255,255,.24);
+  background: rgba(15, 23, 42, 0.9); /* slate-900-ish */
+  color: #e5e7eb; /* gray-200 */
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 /* Try to darken the dropdown panel + items (support varies by browser) */
 .form-select option,
 .form-select optgroup {
-  background: #0b1220;   /* your site background */
+  background: #0b1220; /* your site background */
   color: #e5e7eb;
 }
 
-.form-select option:checked { background: #4f46e5; color: #fff; }
+.form-select option:checked {
+  background: #4f46e5;
+  color: #fff;
+}
 
 /* If you were using disabled, keep it readable */
 .form-select:disabled {
   opacity: 1;
   color: #cbd5e1;
-  background: rgba(255,255,255,.08);
-  border-color: rgba(255,255,255,.24);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 /* === Global === */
@@ -298,4 +303,41 @@ main {
   aspect-ratio: 3/2;
   object-fit: cover;
   background: rgba(255, 255, 255, 0.04);
+}
+
+/* Soft badge + corner badge */
+.badge-soft {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.5rem;
+  background: rgba(124, 58, 237, 0.14); /* violet glass */
+  color: #e6eaf5;
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  font-size: 0.75rem;
+  line-height: 1;
+}
+.card .corner-badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding: 0.18rem 0.48rem;
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  color: #e6eaf5;
+  font-size: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* Recommendation meter */
+.rec-meter {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.rec-fill {
+  height: 100%;
+  /* Winter gradient: violet -> cyan */
+  background: linear-gradient(90deg, #7c3aed, #22d3ee);
 }
