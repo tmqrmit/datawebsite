@@ -330,14 +330,17 @@ main {
 }
 
 /* Recommendation meter */
+/* meter: thicker, clearer contrast */
 .rec-meter {
-  height: 6px;
+  height: 8px; /* was 6px */
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
+  transform: translateZ(0); /* helps sub-pixel rendering */
 }
 .rec-fill {
   height: 100%;
-  /* Winter gradient: violet -> cyan */
+  width: 100%; /* width stays 100%; scaleX drives the length */
+  transform-origin: left;
   background: linear-gradient(90deg, #7c3aed, #22d3ee);
 }
