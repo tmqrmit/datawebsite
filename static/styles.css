@@ -256,7 +256,6 @@ main {
   border-color: rgba(124, 58, 237, 0.55);
   color: #fff;
 }
-
 .form-select:disabled,
 .form-select[disabled] {
   opacity: 1; /* remove dimming */
