@@ -347,3 +347,7 @@ main {
   transform-origin: left;
   background: linear-gradient(90deg, #7c3aed, #22d3ee);
 }
+textarea.form-control::placeholder {
+  color: white;
+  opacity: 0.5;
+}
