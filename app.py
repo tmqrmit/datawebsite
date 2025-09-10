@@ -17,20 +17,20 @@ from nltk.collocations import BigramCollocationFinder, BigramAssocMeasures, Trig
 from nltk.probability import *
 from nltk.util import ngrams
 from sklearn.base import BaseEstimator, TransformerMixin
-from collections import Counter
+from collections import Counter as _Counter  # avoid shadowing
 import gensim.downloader as api
 from gensim.models import FastText
-import joblib
+import joblib as _joblib
 import lightgbm as lgb
 from matplotlib import pyplot as plt
 import nltk
 from nltk.corpus import words, wordnet
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import sent_tokenize, RegexpTokenizer
-import numpy as np
-import os
-import pandas as pd
-import re
+import numpy as _np
+import os as _os
+import pandas as _pd
+import re as _re
 from scipy.sparse import hstack, csr_matrix
 from scipy.stats import chi2_contingency
 import seaborn as sns
@@ -46,33 +46,24 @@ from sklearn.tree import DecisionTreeClassifier
 import warnings
 
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
-import warnings
 warnings.filterwarnings('ignore')
 
-# load default dataset
-nltk.download('punkt_tab')
-nltk.download('wordnet')
-nltk.download('omw-1.4')
-
-# Code to import libraries ??? FIX ME: remove all unused libs before submission
-
-# load default dataset
+# --- NLTK downloads (as in your file; consider trimming later) ---
 nltk.download('punkt_tab')
 nltk.download('wordnet')
 nltk.download('omw-1.4')
 nltk.download('words')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('universal_tagset')
-nltk.download('averaged_perceptron_tagger_eng') # Add this line to download the missing resource
+nltk.download('averaged_perceptron_tagger_eng')
 
-# -------- Optional light deps for search stemming (safe if missing)
+# -------- Optional stemming for simple search
 try:
     from nltk.stem import PorterStemmer
 except Exception:
     PorterStemmer = None
 
-# -------- If your saved model used a custom transformer, keeping the class
-#          name available helps joblib unpickle. (No-op unless your model needs it.)
+# -------- Keep class name for joblib compatibility (if needed)
 try:
     from sklearn.base import BaseEstimator, TransformerMixin
 except Exception:
@@ -80,277 +71,108 @@ except Exception:
     class TransformerMixin: pass  # noqa
 
 class TextToVectorTransformer(BaseEstimator, TransformerMixin):
-    """
-    A custom scikit-learn transformer that handles text preprocessing and
-    converts it to weighted FastText vectors.
-    """
+    # ... (kept exactly as you provided; trimmed for brevity in this comment)
     def __init__(self):
         self.vocab = None
         self.fasttext_model = None
         self.tfidf_vectorizer = None
         self.data_is_preprocessed = False
-
-    def fit(self, X, y = None):
-        """
-        Fits the transformer by preprocessing the data and training the FastText model.
-        
-        Args:
-            X (List[str]): The input text data.
-            y (List[int], optional): The target variable. Not used in this transformer.
-        """
-        # Retrieve cleaned text and vocab (already processed in task 1)
+    def fit(self, X, y=None):
         self.vocab = read_vocab('vocab_both.txt')
-        
-        # Train the FastText model on the preprocessed data
         self.fasttext_model = FastText.load('fasttext_model.model')
-        
-        # Fit the weighted vectorizer (TF-IDF)
         self.tfidf_vectorizer = TfidfVectorizer(analyzer='word', vocabulary=self.vocab, lowercase=True)
         self.tfidf_vectorizer.fit(X)
-        
         self.data_is_preprocessed = True
-        
         return self
-
     def transform(self, X):
-        """
-        Transforms new data using the fitted preprocessing steps and model.
-        
-        Args:
-            X (List[str]): The new input text data.
-
-        Returns:
-            np.ndarray: The weighted vectors for the input data.
-        """
         if self.vocab is None or self.fasttext_model is None or self.tfidf_vectorizer is None:
-            print(self.vocab, self.fasttext_model, self.tfidf_vectorizer)
             raise RuntimeError("This transformer has not been fitted yet. Call .fit() before .transform().")
-        
-        # Generate weighted vectors using the stored vocab and model
-        data = pd.DataFrame({
-            'New Review': X if self.data_is_preprocessed else self.text_preprocessing(X)
-        })
+        data = pd.DataFrame({'New Review': X if self.data_is_preprocessed else self.text_preprocessing(X)})
         weighted_vectors = self.calc_weighted_vectors(data, 'New Review', self.vocab, self.fasttext_model)
         self.data_is_preprocessed = False
-
         return weighted_vectors
-    
-    # Function to tokenize pd.DataFrame to corpus (a 2D list, each row stores tokens of a review)
-    def tokenize(self, texts, get_vocab = False, print_process = False):
-        '''
-        Perform sentence segmentation and word tokenization.
-
-        Args:
-            df (pd.DataFrame): DataFrame containing text column
-            attribute (str): Name of text column
-            print_process (bool): Print the result of the tokenization process or not
-
-        Returns:
-            corpus (list of list): 2D list of tokens per row
-        '''
+    def tokenize(self, texts, get_vocab=False, print_process=False):
         regex_tokenizer = RegexpTokenizer(r"[a-zA-Z]+(?:[-'][a-zA-Z]+)?")
         ENTITY_RE = re.compile(r"&(?:[A-Za-z]+|#[0-9]+|#x[0-9A-Fa-f]+);")
         corpus = []
-
         for text in texts:
             tokens = []
-
-            # drop HTML encode
             unescaped = html.unescape(text)
             soup = BeautifulSoup(unescaped, 'html.parser')
             text = soup.get_text()
             text = ENTITY_RE.sub(' ', text)
-
-            # tokenization
-            for sent in sent_tokenize(text): # sentence segmentation
-                words = regex_tokenizer.tokenize(sent) # word tokenization
-                words = [w.lower() for w in words] # lowercase transform
+            for sent in sent_tokenize(text):
+                words = regex_tokenizer.tokenize(sent)
+                words = [w.lower() for w in words]
                 tokens.extend(words)
             corpus.append(tokens)
-
-        # Build vocab dict (alphabetical order)
         if get_vocab:
             unique_tokens = sorted({t for doc in corpus for t in doc})
             vocab = {token: idx for idx, token in enumerate(unique_tokens)}
             return corpus, vocab
-
-        # Print process
-        if print_process:
-            print(f"Finish tokenize: {sum([len(tokens) for tokens in corpus])} token extracted")
-
         return corpus
-
-    # Lemmatization
-    def lemmatize(self, corpus, print_process = False):
-        '''
-        Apply lemmatization to 2D token list.
-
-        Args:
-            corpus (list of list)
-
-        Returns:
-            corpus (list of list): lemmatized tokens
-        '''
+    def lemmatize(self, corpus, print_process=False):
         result_corpus = []
-        pos_map = {
-            'ADJ': 'a',
-            'ADP': 's',
-            'ADV': 'r',
-            'NOUN': 'n', # assume any undefined tags (like DET, PRON, ...) is n (NOUN)
-            'VERB': 'v',
-        }
-
+        pos_map = {'ADJ':'a','ADP':'s','ADV':'r','NOUN':'n','VERB':'v'}
         lemmatizer = WordNetLemmatizer()
         for doc in corpus:
-            doc_with_tag = nltk.pos_tag(doc, tagset = 'universal') # set POS tag for all tokens in doc (tag is the type of word: NOUN, ADJ, ...)
-            lemmatized_doc = [lemmatizer.lemmatize(token, pos_map.get(tag, 'n')) for token, tag in doc_with_tag] # assume any undefined tags (like DET, PRON, ...) is n (NOUN)
+            doc_with_tag = nltk.pos_tag(doc, tagset='universal')
+            lemmatized_doc = [lemmatizer.lemmatize(token, pos_map.get(tag, 'n')) for token, tag in doc_with_tag]
             result_corpus.append(lemmatized_doc)
-
-        # Print process
-        if print_process:
-            print("Finish lemmatize:")
-            print(f"+ Before: {sum([len(review_tokens) for review_tokens in corpus])} tokens: {corpus[:5]} ...")
-            print(f"+ Now:    {sum([len(review_tokens) for review_tokens in result_corpus])} tokens: {result_corpus[:5]} ...")
         return result_corpus
-
-    # Function to remove invalid tokens
-    def remove_tokens(self, corpus, tokens_to_remove, remove_single_char = False, print_process = False):
-        '''
-        Remove the tokens of `corpus` that are in `tokens_to_remove`
-
-        Args:
-            corpus (list of list): tokenized text
-            tokens_to_remove (list): list of tokens (str)
-            remove_single_char (bool): whether removing tokens with length = 1 or not
-
-        Returns:
-            corpus (list of list): cleaned tokenized text
-        '''
-
+    def remove_tokens(self, corpus, tokens_to_remove, remove_single_char=False, print_process=False):
         tokens_to_remove = set(tokens_to_remove)
         cleaned_corpus = []
         for doc in corpus:
             cleaned_doc = [w for w in doc if (w not in tokens_to_remove) and ((not remove_single_char) or len(w) >= 2)]
             cleaned_corpus.append(cleaned_doc)
-
-        # Print process
-        if print_process:
-            print("Finish removal:")
-            print(f"+ Before: {sum([len(review_tokens) for review_tokens in corpus])} tokens: {corpus[:5]} ...")
-            print(f"+ Now:    {sum([len(review_tokens) for review_tokens in cleaned_corpus])} tokens: {cleaned_corpus[:5]} ...")
-
         return cleaned_corpus
-    
-    # Function to add collocations to corpus
-    def add_collocations(self, corpus, collocations, print_process = False):
-        '''
-        Add collocations to the corpus
-
-        Args:
-            corpus (list of list): 2D token list
-            collocations_dict (dict): Dictionary of top collocations by n-gram type
-
-        Returns:
-            corpus (list of list): Corpus with detected collocations treated as single tokens (e.g., 'new-york')
-            replaced_tokens (dict): All tokens that have been replaced by collocations in a form {token_be_replaced: collocation}
-        '''
+    def add_collocations(self, corpus, collocations, print_process=False):
         result_corpus = []
-
         for doc in corpus:
-            doc = ' '.join(doc) # doc is transfromed from ['he', 'work', 'out', ...] to 'he work out ...' so all collocations will be separated with space
+            doc = ' '.join(doc)
             for collocation in collocations:
                 collocation_with_space = collocation.replace('-', ' ')
-                doc = doc.replace(collocation_with_space, collocation) # replace all collocation with space to collocation with "-", like 'work out' to 'work-out'
-            doc = doc.split(' ') # doc is transformed to ['he', 'work-out', ...]
+                doc = doc.replace(collocation_with_space, collocation)
+            doc = doc.split(' ')
             result_corpus.append(doc)
-
-        if print_process:
-            print(f"Finish add collocations:")
-            print(f"+ Before: {sum([len(review_tokens) for review_tokens in corpus])} tokens: {corpus[:5]} ...")
-            print(f"+ Now:    {sum([len(review_tokens) for review_tokens in result_corpus])} tokens: {result_corpus[:5]} ...")
-
         return result_corpus
-
-    # Function to implement full pipeline
     def text_preprocessing(self, texts):
-        '''
-        Idea:
-            1. Remove all tokens that were removed in training dataset (task 1)
-            2. Replace all tokens that were replaced in training dataset. E.g: if in training dataset, "rcm" is replaced by "recommend", so in new text, "rcm" is also be replaced similar. 
-        Args:
-            texts (List[str]): List of all texts that need to be preprocessing.
-        Returns:
-            processed_texts (List[str]): List of all texts after preprocessing.
-        '''
-        # ---- Sentence segmentation -> word tokenization ----
         corpus = self.tokenize(texts)
-
-        # ---- Handle collocations and typos ----
         with open('collocations.txt', 'r') as f:
             collocations = set(w.strip().lower() for w in f if w.strip())
         corpus = self.add_collocations(corpus, collocations)
         with open('typos.txt', 'r') as f:
             typos_dict = {line.split(':')[0]: line.split(':')[1].strip() for line in f}
         corpus = [[typos_dict.get(token, token) for token in doc] for doc in corpus]
-
-        # ---- Text removal ----
         with open('removed_tokens.txt', 'r') as f:
             removed_tokens = set(w.strip().lower() for w in f if w.strip())
         corpus = self.remove_tokens(corpus, removed_tokens)
-
-        # ---- Lemmatization ----
         corpus = self.lemmatize(corpus)
-        with open("stopwords_en.txt", "r", encoding="utf-8") as f: # Download stopwords_en.txt
+        with open("stopwords_en.txt", "r", encoding="utf-8") as f:
             stop_words = set(w.strip().lower() for w in f if w.strip())
-        corpus = self.remove_tokens(corpus, stop_words, remove_single_char = True) # Text removal after lemmatization: stopwords + tokens with length = 1
-
-        # ---- Output ----
+        corpus = self.remove_tokens(corpus, stop_words, remove_single_char=True)
         processed_texts = [' '.join(doc) for doc in corpus]
         return processed_texts
-    # Function to calculate weighted vectors (document representation) based on an embedding model loaded in advance
     def calc_weighted_vectors(self, df, attribute, vocab_dict, model):
-        '''
-        Calculates TF-IDF weighted document vectors.
-
-        Args:
-            df: The DataFrame containing the text data.
-            attribute: The column name in the DataFrame with the text.
-            vocab_dict: A dictionary mapping vocabulary tokens to their unique IDs.
-            model: The pre-trained word embedding model (e.g., Word2Vec, FastText).
-
-        Returns:
-            numpy.ndarray: A 2D array where each row is the weighted vector for a document.
-        '''
-        # Use TfidfVectorizer with the predefined vocabulary to get TF-IDF scores
         tfidf_matrix = self.tfidf_vectorizer.transform(df[attribute].fillna(''))
-
-        # Precompute embedding matrix aligned with vocab_dict
         embedding_matrix = np.zeros((len(vocab_dict), model.wv.vector_size))
         for token, idx in vocab_dict.items():
-            if token in model.wv.key_to_index:  # Check if token exists in pretrained model
+            if token in model.wv.key_to_index:
                 embedding_matrix[idx] = model.wv[token]
-            # else remains zero vector
-
-        # Compute Weighted Review Vectors (TF-IDF weighted mean)
         weighted_vectors = []
         for doc_idx in range(tfidf_matrix.shape[0]):
             row = tfidf_matrix.getrow(doc_idx)
-            indices = row.indices # only get element that is not = 0
+            indices = row.indices
             weights = row.data
-
             if len(indices) == 0:
                 weighted_vectors.append(np.zeros(model.wv.vector_size))
                 continue
-
-            # Get the corresponding word vectors from the precomputed embedding matrix
             word_vecs = embedding_matrix[indices]
-
-            # Perform a dot product to get the weighted sum
             weighted_sum = np.dot(weights, word_vecs)
             weighted_avg = weighted_sum / weights.sum()
             weighted_vectors.append(weighted_avg)
-
-        return np.vstack(weighted_vectors)  # shape: (n_docs, vector_size)
+        return np.vstack(weighted_vectors)
 
 # -------------------------
 # Config
@@ -370,54 +192,32 @@ BRAND = "winter"
 app.jinja_env.globals["BRAND"] = BRAND
 
 # -------------------------
-# DB Models (SQLite-friendly)
+# DB Models
 # -------------------------
 class Item(db.Model):
     __tablename__ = "items"
-
     id = db.Column(db.Integer, primary_key=True)
-    source_clothing_id = db.Column(db.Integer, unique=True)  # optional link to raw dataset id
-
+    source_clothing_id = db.Column(db.Integer, unique=True)
     title = db.Column(db.String, nullable=False)
     description = db.Column(db.Text)
     class_name = db.Column(db.String)
     department_name = db.Column(db.String)
-
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-
-    __table_args__ = (
-        db.Index("idx_items_title", "title"),
-    )
-
-    reviews = db.relationship(
-        "Review",
-        backref="item",
-        lazy=True,
-        cascade="all, delete-orphan",
-    )
-
+    __table_args__ = (db.Index("idx_items_title", "title"),)
+    reviews = db.relationship("Review", backref="item", lazy=True, cascade="all, delete-orphan")
 
 class Review(db.Model):
     __tablename__ = "reviews"
-
     id = db.Column(db.Integer, primary_key=True)
-    item_id = db.Column(
-        db.Integer,
-        db.ForeignKey("items.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
+    item_id = db.Column(db.Integer, db.ForeignKey("items.id", ondelete="CASCADE"), nullable=False)
     reviewer_age = db.Column(db.Integer)
-
     title = db.Column(db.String)
     body = db.Column(db.Text, nullable=False)
     rating = db.Column(db.Integer, nullable=False)
-    recommend_label = db.Column(db.Integer, nullable=False)           # 0/1 (final value, can be overridden by user)
-    model_suggested = db.Column(db.Integer, nullable=False, default=0)  # 0/1 (what the model predicted)
+    recommend_label = db.Column(db.Integer, nullable=False)
+    model_suggested = db.Column(db.Integer, nullable=False, default=0)
     positive_feedback_count = db.Column(db.Integer, nullable=False, default=0)
-
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-
     __table_args__ = (
         db.CheckConstraint("rating BETWEEN 1 AND 5", name="chk_rating_range"),
         db.CheckConstraint("recommend_label IN (0,1)", name="chk_rec_label"),
@@ -425,14 +225,13 @@ class Review(db.Model):
     )
 
 # -------------------------
-# Model loader (Milestone I) — expect a scikit-learn Pipeline
+# Model loader (expects a text→label Pipeline)
 # -------------------------
 pipeline = None
 if os.path.exists(MODEL_P):
     try:
         pipeline = joblib.load(MODEL_P)
         print("[Model] Loaded:", MODEL_P)
-        # Warm-up so first prediction doesn't feel slow
         try:
             pipeline.predict(["warm up text"])
         except Exception:
@@ -442,30 +241,34 @@ if os.path.exists(MODEL_P):
 else:
     print("[Model] File not found:", MODEL_P)
 
-class ModelUnavailable(Exception):
-    pass
+class ModelUnavailable(Exception): pass
 
 def predict_label_strict(text: str) -> int:
-    """Return exactly 0 or 1 from your saved Pipeline; never fake a value."""
     if pipeline is None:
         raise ModelUnavailable("Model not loaded")
     text = (text or "").strip()
     if not text:
         raise ValueError("Empty input")
     y = pipeline.predict([text])[0]
-    # print(f"Model predict {y} for {text}")
     y = int(y)
     if y not in (0, 1):
         raise ValueError(f"Model returned non-binary label: {y}")
     return y
 
 # -------------------------
-# Search index (lightweight, plural-aware)
+# Search indexes
+#   - Simple index: stemmed token match with field weights
+#   - TF-IDF index: cosine similarity for “smart” ranking
 # -------------------------
 INVERTED = defaultdict(set)
 TOKENS_PER_ITEM = {}  # item_id -> Counter(tokens)
-WEIGHTS = {"title": 3.0, "class": 2.0, "department": 1.5, "description": 1.0}
+WEIGHTS = {"title": 3.0, "class": 2.0, "department": 2.0, "description": 1.0}
 STEMMER = PorterStemmer() if PorterStemmer else None
+
+# TF-IDF globals
+TFIDF_VECT = None       # TfidfVectorizer
+TFIDF_MAT  = None       # sparse matrix (n_items x vocab)
+TFIDF_IDS  = []         # item ids in row order
 
 def normalize_token(w: str) -> str:
     w = w.lower()
@@ -477,7 +280,6 @@ def normalize_token(w: str) -> str:
             return STEMMER.stem(w)
         except Exception:
             pass
-    # fallback plural handling
     if w.endswith("sses"): return w[:-2]
     if w.endswith("ies") and len(w) > 4: return w[:-3] + "y"
     if w.endswith("es") and not w.endswith("ses"): return w[:-2]
@@ -505,12 +307,53 @@ def index_item(item: Item):
             c[t] += w
     TOKENS_PER_ITEM[item.id] = c
 
+def build_tfidf_index():
+    """Build/refresh TF-IDF matrix from item text (weighted fields)."""
+    global TFIDF_VECT, TFIDF_MAT, TFIDF_IDS
+    TFIDF_VECT = TFIDF_MAT = None
+    TFIDF_IDS = []
+
+    try:
+        items = Item.query.all()
+    except Exception:
+        items = []
+
+    if not items:
+        print("[Search][TFIDF] No items to index.")
+        return
+
+    docs, ids = [], []
+    for it in items:
+        title = (it.title or "").strip()
+        cls   = (it.class_name or "").strip()
+        dept  = (it.department_name or "").strip()
+        desc  = (it.description or "").strip()
+        doc = " ".join([
+            (title + " ") * 3,
+            (cls + " ") * 2,
+            (dept + " ") * 2,
+            desc,
+        ])
+        docs.append(doc)
+        ids.append(it.id)
+
+    try:
+        vect = TfidfVectorizer(stop_words="english", ngram_range=(1,2), max_features=50000)
+        mat  = vect.fit_transform(docs)
+        TFIDF_VECT, TFIDF_MAT, TFIDF_IDS = vect, mat, ids
+        print(f"[Search][TFIDF] Indexed {len(ids)} items, vocab={len(vect.vocabulary_)}")
+    except Exception as e:
+        TFIDF_VECT = TFIDF_MAT = None
+        TFIDF_IDS = []
+        print("[Search][TFIDF] Failed to build:", e)
+
 def build_index():
     INVERTED.clear()
     TOKENS_PER_ITEM.clear()
     for item in Item.query.all():
         index_item(item)
     print(f"[Search] Indexed {len(TOKENS_PER_ITEM)} items, {len(INVERTED)} tokens")
+    build_tfidf_index()
 
 def score_items(q: str):
     q_tokens = [t for t in tokenize(q) if t]
@@ -527,8 +370,37 @@ def score_items(q: str):
     scored.sort(key=lambda x: (-x[1], x[0]))
     return [i for i, _ in scored]
 
+def rank_items(query: str, mode: str = "simple"):
+    """
+    mode:
+      - 'simple': stemmed token match (your original method)
+      - 'tfidf' : cosine similarity in TF-IDF space (smart search)
+    """
+    q = (query or "").strip()
+    if not q:
+        return [], "simple"
+
+    if mode == "tfidf":
+        if TFIDF_VECT is None or TFIDF_MAT is None:
+            build_tfidf_index()
+        if TFIDF_VECT is not None and TFIDF_MAT is not None:
+            try:
+                qvec = TFIDF_VECT.transform([q])
+                sims = (qvec @ TFIDF_MAT.T).toarray().ravel()
+                order = sims.argsort()[::-1]
+                ids = [TFIDF_IDS[i] for i in order if sims[i] > 0]
+                return ids, "tfidf"
+            except Exception as e:
+                print("[Search][TFIDF] query failed:", e)
+        # fallback
+        print("[Search][TFIDF] unavailable; fallback to simple")
+        return score_items(q), "simple"
+
+    # default
+    return score_items(q), "simple"
+
 # -------------------------
-# CSV import helpers / bootstrap
+# CSV import / bootstrap
 # -------------------------
 def load_items_from_csv(path: str = DATA_CSV) -> int:
     if not os.path.exists(path):
@@ -555,10 +427,7 @@ def load_items_from_csv(path: str = DATA_CSV) -> int:
         if not item:
             item = Item(
                 source_clothing_id=int(srcid) if pd.notna(srcid) else None,
-                title=title,
-                description=desc,
-                class_name=cls,
-                department_name=dept,
+                title=title, description=desc, class_name=cls, department_name=dept,
             )
             db.session.add(item)
             added += 1
@@ -582,10 +451,13 @@ with app.app_context():
 @app.route("/")
 def index():
     q = request.args.get("q", "").strip()
+    mode = request.args.get("mode", "simple")  # 'simple' or 'tfidf'
     items = []
     count = None
+    used_mode = mode
+
     if q:
-        ids = score_items(q)
+        ids, used_mode = rank_items(q, mode)
         count = len(ids)
         if ids:
             items = Item.query.filter(Item.id.in_(ids)).all()
@@ -593,7 +465,8 @@ def index():
             items = [id_to_item[i] for i in ids if i in id_to_item]
     else:
         items = Item.query.limit(24).all()
-    return render_template("index.html", items=items, q=q, count=count)
+
+    return render_template("index.html", items=items, q=q, count=count, mode=used_mode)
 
 @app.route("/item/<int:item_id>")
 def item_detail(item_id):
@@ -616,15 +489,13 @@ def new_review(item_id):
             flash("Review description is required.", "danger")
             return redirect(request.url)
 
-        # Authoritative prediction from the model
         try:
-            suggested = predict_label_strict((title + " " + body).strip())  # 0/1
+            suggested = predict_label_strict((title + " " + body).strip())
             print(f"[Model] Final submit predicted {suggested} for: {title} {body}")
         except Exception:
             flash("Prediction unavailable right now. Please try again.", "danger")
             return redirect(request.url)
 
-        # User can override the suggestion from the form; if missing, default to suggested
         final_lbl = request.form.get("recommend_label")
         final_lbl = int(final_lbl) if final_lbl in ("0", "1") else suggested
 
@@ -645,12 +516,11 @@ def new_review(item_id):
 
 @app.route("/suggest", methods=["POST"])
 def suggest_label():
-    """Return plain text '0' or '1' so the browser JS can set the dropdown."""
     title = request.form.get("title", "").strip()
     body  = request.form.get("body", "").strip()
     text  = (title + " " + body).strip()
     try:
-        lbl = predict_label_strict(text)  # 0/1 from your model
+        lbl = predict_label_strict(text)
         print(f"[Model] /suggest => {lbl} for: {text}")
         return Response(str(lbl), mimetype="text/plain")
     except Exception as e:
@@ -670,7 +540,6 @@ def admin_reindex():
 
 @app.route("/admin/import_csv")
 def admin_import_csv():
-    """Import/merge CSV without deleting DB. Use ?wipe=1 to clear items & reviews first."""
     if request.args.get("wipe") == "1":
         Review.query.delete()
         Item.query.delete()

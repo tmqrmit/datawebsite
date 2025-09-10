@@ -263,3 +263,13 @@ main {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.24);
 }
+
+.item-img,
+.card > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3/2;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.04);
+}
