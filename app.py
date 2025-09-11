@@ -139,17 +139,17 @@ class TextToVectorTransformer(BaseEstimator, TransformerMixin):
         return result_corpus
     def text_preprocessing(self, texts):
         corpus = self.tokenize(texts)
-        with open('collocations.txt', 'r') as f:
+        with open(os.path.join(BASE_DIR, 'collocations.txt'), 'r') as f:
             collocations = set(w.strip().lower() for w in f if w.strip())
         corpus = self.add_collocations(corpus, collocations)
-        with open('typos.txt', 'r') as f:
+        with open(os.path.join(BASE_DIR, 'typos.txt'), 'r') as f:
             typos_dict = {line.split(':')[0]: line.split(':')[1].strip() for line in f}
         corpus = [[typos_dict.get(token, token) for token in doc] for doc in corpus]
-        with open('removed_tokens.txt', 'r') as f:
+        with open(os.path.join(BASE_DIR, 'removed_tokens.txt'), 'r') as f:
             removed_tokens = set(w.strip().lower() for w in f if w.strip())
         corpus = self.remove_tokens(corpus, removed_tokens)
         corpus = self.lemmatize(corpus)
-        with open("stopwords_en.txt", "r", encoding="utf-8") as f:
+        with open(os.path.join(BASE_DIR, "stopwords_en.txt"), "r", encoding="utf-8") as f:
             stop_words = set(w.strip().lower() for w in f if w.strip())
         corpus = self.remove_tokens(corpus, stop_words, remove_single_char=True)
         processed_texts = [' '.join(doc) for doc in corpus]
