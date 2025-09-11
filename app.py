@@ -44,6 +44,7 @@ from sklearn.preprocessing import OneHotEncoder, PowerTransformer, StandardScale
 from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 import warnings
+from difflib import get_close_matches
 
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 warnings.filterwarnings('ignore')
@@ -56,6 +57,15 @@ nltk.download('words')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('universal_tagset')
 nltk.download('averaged_perceptron_tagger_eng')
+
+# -------- 
+def expand_query_tokens(q_tokens):
+    expanded = set(q_tokens)
+    for qt in q_tokens:
+        # look for similar words in the inverted index
+        matches = get_close_matches(qt, INVERTED.keys(), n=5, cutoff=0.7)
+        expanded.update(matches)
+    return list(expanded)
 
 # -------- Optional stemming for simple search
 try:
@@ -353,18 +363,23 @@ def build_index():
 
 def score_items(q: str):
     q_tokens = [t for t in tokenize(q) if t]
-    if not q_tokens: return []
+    if not q_tokens:
+        return []
+    q_tokens = expand_query_tokens(q_tokens)
+
     candidate_ids = set()
     for t in q_tokens:
         candidate_ids |= INVERTED.get(t, set())
+
     scored = []
     for item_id in candidate_ids:
         c = TOKENS_PER_ITEM.get(item_id, Counter())
-        s = sum(c.get(t, 0) for t in q_tokens)
+        s = sum(c.get(t, 0) for t in q_tokens)   # relevance = keyword frequency
         if s > 0:
             scored.append((item_id, s))
-    scored.sort(key=lambda x: (-x[1], x[0]))
-    return [i for i, _ in scored]
+
+    scored.sort(key=lambda x: (-x[1], x[0]))  # highest relevance first
+    return scored   # returns list of (item_id, relevance_score)
 
 def rank_items(query: str, mode: str = "simple"):
     q = (query or "").strip()
@@ -562,32 +577,49 @@ with app.app_context():
     bootstrap_if_needed()
 
 
-def items_with_rec_order(ids: list[int] | None = None, limit: int | None = None):
+def items_with_rec_order(scored_items: list[tuple[int, int]] | None = None, limit: int | None = None):
     """
-    Return items ordered by SUM(Review.recommend_label) DESC,
-    then by total review count (DESC), then by item id.
-    Also returns a small stats map so templates can show badges.
+    If scored_items is provided → sort by relevance + rec_sum + review_count + id
+    If not provided → just sort by rec_sum + review_count + id
     """
+    relevance_map = {}
     q = db.session.query(
         Item,
         db.func.coalesce(db.func.sum(Review.recommend_label), 0).label("rec_sum"),
         db.func.count(Review.id).label("review_count"),
     ).outerjoin(Review, Review.item_id == Item.id)
 
-    if ids:
+    if scored_items:
+        ids = [i for i, _ in scored_items]
+        relevance_map = dict(scored_items)
         q = q.filter(Item.id.in_(ids))
 
-    q = (
-        q.group_by(Item.id)
-         .order_by(db.desc("rec_sum"), db.desc("review_count"), Item.id)
+    q = q.group_by(Item.id)
+    rows = q.all()
+
+    rec_map = {
+        row[0].id: {
+            "rec_sum": int(row[1] or 0),
+            "review_count": int(row[2] or 0),
+            "relevance": relevance_map.get(row[0].id, 0),
+        }
+        for row in rows
+    }
+
+    # Sorting differs based on whether relevance is present
+    items = sorted(
+        [row[0] for row in rows],
+        key=lambda it: (
+            -rec_map[it.id]["relevance"],   # always present, 0 if homepage
+            -rec_map[it.id]["rec_sum"],
+            -rec_map[it.id]["review_count"],
+            it.id,
+        ),
     )
 
     if limit:
-        q = q.limit(limit)
+        items = items[:limit]
 
-    rows = q.all()
-    items = [row[0] for row in rows]
-    rec_map = {row[0].id: {"rec_sum": int(row[1] or 0), "review_count": int(row[2] or 0)} for row in rows}
     return items, rec_map
 
 
@@ -602,13 +634,20 @@ def index():
     count = None
 
     if q:
-        ids, used_mode = rank_items(q, mode)  # filter by query
-        count = len(ids)
-        items, rec_map = items_with_rec_order(ids=ids)  # sort by recommended count
+        scored_items, used_mode = rank_items(q, mode)  # [(id, relevance), ...]
+        count = len(scored_items)
+        items, rec_map = items_with_rec_order(scored_items)  # pass scored list
     else:
-        items, rec_map = items_with_rec_order(limit=24)  # top recommended on homepage
+        items, rec_map = items_with_rec_order([], limit=24)  # homepage top recommended
 
-    return render_template("index.html", items=items, q=q, count=count, mode=used_mode, rec_map=rec_map)
+    return render_template(
+        "index.html",
+        items=items,
+        q=q,
+        count=count,
+        mode=used_mode,
+        rec_map=rec_map,
+    )
 
 @app.route("/item/<int:item_id>")
 def item_detail(item_id):
